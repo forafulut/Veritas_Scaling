@@ -24,7 +24,6 @@ sonuçları rapor olarak dışa aktarır.
 - [Veri kaynağı](#veri-kaynağı)
 - [Doğrulama ve denetimler](#doğrulama-ve-denetimler)
 - [Proje yapısı](#proje-yapısı)
-- [Lisans](#lisans)
 
 ## Özellikler
 
@@ -135,7 +134,3 @@ fonts/                          Inter Regular / Medium / Bold
 BENIOKU.txt                     Kurulum ve iş akışı kılavuzu (Türkçe)
 requirements.txt                PyQt6, numpy, matplotlib
 ```
-
-## Lisans
-
-[Apache License 2.0](LICENSE)
