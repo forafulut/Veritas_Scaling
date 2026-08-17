@@ -259,8 +259,10 @@ def page_table(t: dict, dark: bool) -> None:
 
     view = df[df["Mw"] >= mw_min]
     if q:
-        mask = (view["Deprem"].str.contains(q, case=False, na=False)
-                | view["İstasyon"].str.contains(q, case=False, na=False))
+        # düz metin araması: "[" gibi girdiler düzenli ifade hatası vermesin
+        mask = (view["Deprem"].str.contains(q, case=False, na=False, regex=False)
+                | view["İstasyon"].str.contains(q, case=False, na=False,
+                                                regex=False))
         view = view[mask]
     if only_ok:
         view = view[view["Durum"] == "Uygun"]
