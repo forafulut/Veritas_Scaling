@@ -1,0 +1,79 @@
+=======================================================================
+ VERITAS · Deprem Kayıtlarının Seçimi ve Ölçeklendirilmesi (TBDY 2018)
+=======================================================================
+
+KURULUM
+-------
+1) Python 3.10 veya üzeri kurulu olmalıdır.
+2) Gerekli paketler:
+     pip install PyQt6 numpy matplotlib
+3) Çalıştırma:
+     python VERITAS_TBDY2018_Olcekleme.py
+   ("fonts" klasörü .py dosyasıyla aynı dizinde kalmalıdır; yoksa
+    sistem yazı tipleriyle çalışmaya devam eder.)
+
+İŞ AKIŞI (4 ADIM)
+-----------------
+1) SPEKTRUM PARAMETRELERİ
+   AFAD Deprem Tehlike Haritası'ndan alınan Ss ve S1 değerlerini DD-2 ve
+   DD-1 için girin; yerel zemin sınıfını (ZA–ZE), yapının doğal titreşim
+   periyodunu Tp ve analiz türünü seçin. SDS, SD1, TA, TB ve hedef
+   spektrumlar anında güncellenir.
+
+2) KAYIT KÜTÜPHANESİ
+   Tablo 11'deki 11 kayıt takımı her açılışta SEÇİLİ olarak gelir.
+   "Kayıt Klasörünü Tara" ile PEER'den indirdiğiniz .AT2 dosyalarının
+   bulunduğu klasörü gösterin. Program klasörü (alt klasörler dâhil)
+   tarar ve iki iş yapar:
+     a) Tablo 11 kayıtlarını dosya adına göre eşleştirir.
+     b) Kalan PEER dosyalarından OTOMATİK kayıt takımı kurar:
+        · Dosyalar kayıt numarasına (RSN...) göre gruplanır.
+        · Her gruptaki YATAY bileşenlerden aralarındaki açı 90 dereceye
+          en yakın olan çift H1–H2 olarak eşleştirilir.
+          Örn. RSN161_IMPVALL.H_H-BRA225  +  ...-BRA315
+        · DÜŞEY bileşenler (-UP, DWN, UD, -V, -Z ile bitenler) hesaba
+          KATILMAZ; örn. RSN161_IMPVALL.H_H-BRA-UP atlanır.
+        · Deprem ve istasyon adı .AT2 başlığından okunur.
+        · Yeni takımların seçili gelip gelmeyeceği size sorulur.
+     Azimut biçimleri desteklenir: 225/315, 002/092, N76W/S14W, NS/EW,
+     L/T. RSN yoksa gruplama dosya adı gövdesine göre yapılır.
+
+   Mw, uzaklık ve Vs30 bilgisi .AT2 dosyalarında bulunmadığından
+   otomatik eklenen kayıtlarda "—" görünür. Tablodaki satıra ÇİFT
+   TIKLAYARAK bu bilgileri girebilir, dosyaları değiştirebilirsiniz.
+   "Kayıt Ekle" ile elle de kayıt takımı tanımlayabilirsiniz.
+
+3) ÖLÇEKLENDİRME
+   "Hesapla" (F5): %5 sönümlü tepki spektrumları hesaplanır ve TBDY 2018
+   §2.5.2.5'e göre basit (genlik) ölçeklendirme yapılır.
+     · Bireysel katsayı f : hedefe en küçük kareler uyumu
+     · Grup katsayısı  g : ortalama spektrum, 0.2·Tp–1.5·Tp bandının
+                           her noktasında hedefin altına düşmeyecek
+                           biçimde
+     · Nihai katsayı  F = f × g   (DD-2 ve DD-1 için ayrı ayrı)
+   Hedef: 3B analizde SRSS ortalaması ≥ 1.3·Sae, 2B analizde bileşen
+   ortalaması ≥ 1.0·Sae. Grafik sekmeleri: ölçeksiz/ölçekli spektrumlar,
+   katsayı çubukları (Tablo 11 referanslarıyla karşılaştırmalı) ve
+   ölçekli ivme serileri.
+
+4) RAPOR & DIŞA AKTARIM
+   Katsayı özeti tablosu; CSV (katsayılar, spektrumlar), 300 dpi PNG
+   grafikler ve ölçekli ivme serileri (TXT, t–a sütunları, g biriminde)
+   dışa aktarılabilir.
+
+VERİ KAYNAĞI
+------------
+İvme kayıtları (.AT2) PEER NGA-West2 veritabanından indirilmelidir:
+   https://ngawest2.berkeley.edu/
+Kurumsal e-posta ile üyelik gerekir; indirilenler ham ve ölçeksizdir.
+Gerekirse Japonya kayıtları için K-NET/KiK-net (kyoshin.bosai.go.jp),
+Yeni Zelanda kayıtları için GeoNet (geonet.org.nz) kullanılabilir.
+
+NOTLAR
+------
+· .AT2 dosyaları PEER NGA biçiminde ve g biriminde olmalıdır.
+· TBDY §2.5.1 denetimleri programda izlenir: en az 11 kayıt takımı ve
+  aynı depremden en fazla 3 kayıt; aykırılıklar uyarı olarak gösterilir.
+· Tepki spektrumu çözücüsü, bağımsız Nigam–Jennings ve ince adımlı
+  Newmark çözümleriyle %0.3'ten iyi uyumla doğrulanmıştır.
+· Gece/Gündüz modu sol alttaki düğmeden değiştirilir.
