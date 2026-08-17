@@ -1,1 +1,3 @@
-streamlit
+PyQt6
+numpy
+matplotlib
