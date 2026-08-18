@@ -36,10 +36,17 @@ sonuçları rapor olarak dışa aktarır.
 - **Ölçeklendirme motoru:** %5 sönümlü tepki spektrumu çözücüsü (frekans
   ortamında kesin çözüm) ve TBDY 2018 §2.5.2.5'e göre bireysel + grup
   katsayı hesabı.
-- **Rapor & dışa aktarım:** Katsayı özet tablosu; CSV, 300 dpi PNG grafik
-  ve ölçekli ivme serisi (TXT) çıktıları.
+- **Δt uyumlaştırma:** Farklı örnekleme adımlı kayıtlar tek düğmeyle ortak
+  (en ince) Δt'ye yeniden örneklenir; kaba adımlı seriler inceltildiğinden
+  ölçekleme sırasında hiçbir ivme değeri kaybolmaz.
+- **Proje kaydetme/açma:** Spektrum parametreleri ve kayıt kütüphanesi
+  JSON tabanlı `.vts` proje dosyasında saklanır (Dosya menüsü,
+  Ctrl+S / Ctrl+O); kaydedilmemiş değişiklikler başlıkta izlenir.
+- **Rapor & dışa aktarım:** Parametre kartı ve f/F katsayı tablosu;
+  gömülü grafiklerle tek dosyalık kapsamlı HTML rapor; CSV, 300 dpi PNG
+  grafik ve ölçekli ivme serisi (TXT) çıktıları.
 - **Gündüz/gece tema:** Tüm arayüz ve grafikler tek düğmeyle açık/koyu
-  tema arasında geçiş yapar.
+  tema arasında geçiş yapar. Yardım menüsünde Hakkında bölümü bulunur.
 
 ## Kurulum
 
@@ -82,6 +89,13 @@ satırına çift tıklayarak bu bilgileri girebilir veya dosyaları
 değiştirebilirsiniz. "Kayıt Ekle" ile elle de kayıt takımı
 tanımlanabilir.
 
+**Δt Uyumlaştır:** Kayıtların örnekleme adımları farklıysa (ör. 0.005 s
+ve 0.01 s karışık) bu düğme tüm seçili kayıtları takımdaki **en ince**
+Δt'ye doğrusal ara değerle yeniden örnekler. Hedef her zaman en küçük
+adım olduğundan hiçbir serinin örneği atılmaz; adımın tam katı
+durumlarında özgün örnek anları birebir korunur. Durum sütununda her
+kaydın güncel Δt değeri görünür.
+
 ### 3) Ölçeklendirme
 
 "Hesapla" (F5): %5 sönümlü tepki spektrumları hesaplanır ve TBDY
@@ -91,9 +105,21 @@ sekmeleri ölçeksiz/ölçekli spektrumları, katsayı çubuklarını ve
 
 ### 4) Rapor & dışa aktarım
 
-Katsayı özeti tablosu ekranda görüntülenir; CSV (katsayılar,
-spektrumlar), 300 dpi PNG grafikler ve ölçekli ivme serileri (TXT,
-t–a sütunları, g biriminde) dışa aktarılabilir.
+Hedef spektrum parametre kartı ile f ve F katsayılarını iki düzey için
+gösteren özet tablo ekranda görüntülenir. Dışa aktarım seçenekleri:
+
+- **Kapsamlı Rapor (HTML):** girdi parametreleri, kayıt kütüphanesi
+  (Δt, süre, PGA dâhil), yöntem özeti, katsayı tablosu, doğrulama
+  sonucu ve gömülü grafiklerle tek dosyalık, baskı dostu rapor;
+- CSV (katsayılar, spektrumlar), 300 dpi PNG grafikler ve ölçekli ivme
+  serileri (TXT, t–a sütunları, g biriminde).
+
+### Proje dosyası
+
+Dosya menüsünden (Ctrl+S / Ctrl+O) çalışma `.vts` uzantılı JSON proje
+dosyasına kaydedilip yeniden açılabilir; spektrum parametreleri, kayıt
+kütüphanesi, dosya yolları ve seçim durumları saklanır. Taşınmış `.AT2`
+dosyaları "Kayıt Klasörünü Tara" ile yeniden eşleştirilir.
 
 ## Ölçeklendirme yöntemi
 

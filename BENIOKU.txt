@@ -41,6 +41,12 @@ KURULUM
    TIKLAYARAK bu bilgileri girebilir, dosyaları değiştirebilirsiniz.
    "Kayıt Ekle" ile elle de kayıt takımı tanımlayabilirsiniz.
 
+   Δt UYUMLAŞTIR: Kayıtların örnekleme adımları farklıysa bu düğme
+   tüm seçili kayıtları takımdaki EN İNCE Δt'ye doğrusal ara değerle
+   yeniden örnekler. Hedef en küçük adım olduğundan hiçbir serinin
+   örneği atılmaz; ölçekleme sırasında ivme değeri kaybolmaz. Durum
+   sütununda her kaydın güncel Δt değeri görünür.
+
 3) ÖLÇEKLENDİRME
    "Hesapla" (F5): %5 sönümlü tepki spektrumları hesaplanır ve TBDY 2018
    §2.5.2.5'e göre basit (genlik) ölçeklendirme yapılır.
@@ -54,9 +60,22 @@ KURULUM
    katsayı çubukları ve ölçekli ivme serileri.
 
 4) RAPOR & DIŞA AKTARIM
-   Katsayı özeti tablosu; CSV (katsayılar, spektrumlar), 300 dpi PNG
-   grafikler ve ölçekli ivme serileri (TXT, t–a sütunları, g biriminde)
-   dışa aktarılabilir.
+   Hedef spektrum parametre kartı ve f/F katsayı özeti tablosu ekranda
+   görüntülenir. Dışa aktarım:
+     · KAPSAMLI RAPOR (HTML): girdiler, kayıt kütüphanesi (Δt, süre,
+       PGA dâhil), yöntem, katsayılar, doğrulama sonucu ve gömülü
+       grafiklerle tek dosyalık, baskı dostu rapor.
+     · CSV (katsayılar, spektrumlar), 300 dpi PNG grafikler ve ölçekli
+       ivme serileri (TXT, t–a sütunları, g biriminde).
+
+PROJE DOSYASI
+-------------
+Dosya menüsünden çalışmanızı .vts uzantılı JSON proje dosyasına
+kaydedebilir (Ctrl+S) ve yeniden açabilirsiniz (Ctrl+O). Spektrum
+parametreleri, kayıt kütüphanesi, dosya yolları ve seçim durumları
+saklanır. Taşınmış .AT2 dosyaları "Kayıt Klasörünü Tara" ile yeniden
+eşleştirilir. Kaydedilmemiş değişiklikler pencere başlığında "•" ile
+gösterilir. Yardım menüsünde Hakkında bölümü bulunur.
 
 VERİ KAYNAĞI
 ------------

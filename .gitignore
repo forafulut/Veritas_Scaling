@@ -39,6 +39,9 @@ Thumbs.db
 # Project-specific
 *.csv
 *.png
+!docs/*.png
 *.txt
 !requirements.txt
 !BENIOKU.txt
+*.vts
+*.html
