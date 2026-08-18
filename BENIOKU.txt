@@ -21,12 +21,10 @@ KURULUM
    spektrumlar anında güncellenir.
 
 2) KAYIT KÜTÜPHANESİ
-   Tablo 11'deki 11 kayıt takımı her açılışta SEÇİLİ olarak gelir.
+   Kütüphane BOŞ açılır; kendi veri setinizi siz yüklersiniz.
    "Kayıt Klasörünü Tara" ile PEER'den indirdiğiniz .AT2 dosyalarının
    bulunduğu klasörü gösterin. Program klasörü (alt klasörler dâhil)
-   tarar ve iki iş yapar:
-     a) Tablo 11 kayıtlarını dosya adına göre eşleştirir.
-     b) Kalan PEER dosyalarından OTOMATİK kayıt takımı kurar:
+   tarar ve OTOMATİK kayıt takımı kurar:
         · Dosyalar kayıt numarasına (RSN...) göre gruplanır.
         · Her gruptaki YATAY bileşenlerden aralarındaki açı 90 dereceye
           en yakın olan çift H1–H2 olarak eşleştirilir.
@@ -35,8 +33,8 @@ KURULUM
           KATILMAZ; örn. RSN161_IMPVALL.H_H-BRA-UP atlanır.
         · Deprem ve istasyon adı .AT2 başlığından okunur.
         · Yeni takımların seçili gelip gelmeyeceği size sorulur.
-     Azimut biçimleri desteklenir: 225/315, 002/092, N76W/S14W, NS/EW,
-     L/T. RSN yoksa gruplama dosya adı gövdesine göre yapılır.
+   Azimut biçimleri desteklenir: 225/315, 002/092, N76W/S14W, NS/EW,
+   L/T. RSN yoksa gruplama dosya adı gövdesine göre yapılır.
 
    Mw, uzaklık ve Vs30 bilgisi .AT2 dosyalarında bulunmadığından
    otomatik eklenen kayıtlarda "—" görünür. Tablodaki satıra ÇİFT
@@ -53,8 +51,7 @@ KURULUM
      · Nihai katsayı  F = f × g   (DD-2 ve DD-1 için ayrı ayrı)
    Hedef: 3B analizde SRSS ortalaması ≥ 1.3·Sae, 2B analizde bileşen
    ortalaması ≥ 1.0·Sae. Grafik sekmeleri: ölçeksiz/ölçekli spektrumlar,
-   katsayı çubukları (Tablo 11 referanslarıyla karşılaştırmalı) ve
-   ölçekli ivme serileri.
+   katsayı çubukları ve ölçekli ivme serileri.
 
 4) RAPOR & DIŞA AKTARIM
    Katsayı özeti tablosu; CSV (katsayılar, spektrumlar), 300 dpi PNG

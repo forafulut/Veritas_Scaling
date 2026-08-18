@@ -30,9 +30,9 @@ sonuçları rapor olarak dışa aktarır.
 - **Hedef spektrum:** Ss/S1 (DD-2, DD-1), yerel zemin sınıfı (ZA–ZE) ve
   yapı periyodu Tp'den SDS, SD1, TA, TB ve tasarım spektrumlarını anında
   türetir.
-- **Kayıt kütüphanesi:** Tablo 11'deki 11 referans kayıt takımıyla açılır;
-  bir PEER klasörünü tarayarak hem bu kayıtları hem de kalan dosyalardan
-  otomatik H1–H2 bileşen eşleştirmesiyle yeni kayıt takımları kurar.
+- **Kayıt kütüphanesi:** Boş açılır; bir PEER klasörünü tarayarak otomatik
+  H1–H2 bileşen eşleştirmesiyle kendi kayıt takımlarınızı kurar, elle kayıt
+  tanımlamaya da izin verir.
 - **Ölçeklendirme motoru:** %5 sönümlü tepki spektrumu çözücüsü (frekans
   ortamında kesin çözüm) ve TBDY 2018 §2.5.2.5'e göre bireysel + grup
   katsayı hesabı.
@@ -67,15 +67,13 @@ spektrumlar anında güncellenir.
 
 ### 2) Kayıt kütüphanesi
 
-Tablo 11'deki 11 kayıt takımı her açılışta seçili gelir. "Kayıt
+Kütüphane boş açılır — kendi veri setinizi yüklersiniz. "Kayıt
 Klasörünü Tara" ile PEER'den indirilen `.AT2` dosyalarının bulunduğu
-klasörü gösterin; program klasörü (alt klasörler dâhil) tarar ve:
-
-- Tablo 11 kayıtlarını dosya adına göre eşleştirir,
-- kalan dosyalardan otomatik kayıt takımı kurar — dosyalar kayıt
-  numarasına (RSN) göre gruplanır, her gruptaki yatay bileşenlerden
-  aralarındaki açı 90°'ye en yakın olan çift H1–H2 olarak eşleştirilir,
-  düşey bileşenler (`-UP`, `DWN`, `UD`, `-V`, `-Z`) hesaba katılmaz.
+klasörü gösterin; program klasörü (alt klasörler dâhil) tarar ve
+otomatik kayıt takımı kurar: dosyalar kayıt numarasına (RSN) göre
+gruplanır, her gruptaki yatay bileşenlerden aralarındaki açı 90°'ye en
+yakın olan çift H1–H2 olarak eşleştirilir, düşey bileşenler (`-UP`,
+`DWN`, `UD`, `-V`, `-Z`) hesaba katılmaz.
 
 Desteklenen azimut biçimleri: `225/315`, `002/092`, `N76W/S14W`,
 `NS/EW`, `L/T`. Mw, uzaklık ve Vs30 bilgisi `.AT2` dosyalarında
@@ -88,8 +86,8 @@ tanımlanabilir.
 
 "Hesapla" (F5): %5 sönümlü tepki spektrumları hesaplanır ve TBDY
 2018 §2.5.2.5'e göre basit (genlik) ölçeklendirme yapılır. Grafik
-sekmeleri ölçeksiz/ölçekli spektrumları, katsayı çubuklarını (Tablo 11
-referanslarıyla karşılaştırmalı) ve ölçekli ivme serilerini gösterir.
+sekmeleri ölçeksiz/ölçekli spektrumları, katsayı çubuklarını ve
+ölçekli ivme serilerini gösterir.
 
 ### 4) Rapor & dışa aktarım
 

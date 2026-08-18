@@ -10,7 +10,8 @@ tepki spektrumlarını hesaplar ve TBDY 2018 Bölüm 2.5'e göre basit (genlik)
                 0.2·Tp – 1.5·Tp aralığında 1.3·Sae(T)'den küçük olamaz.
   · 2B analiz : bileşen spektrumlarının ortalaması Sae(T)'den küçük olamaz.
 
-Varsayılan kayıt kütüphanesi: Tablo 11 (11 kayıt takımı, PEER NGA-West2).
+Kayıt kütüphanesi boş açılır; kullanıcı kendi .AT2 veri setini klasör
+taramasıyla ya da elle ekleyerek yükler.
 
 Gereksinimler:  Python ≥ 3.10,  PyQt6,  numpy,  matplotlib
 Çalıştırma:     python VERITAS_TBDY2018_Olcekleme.py
@@ -358,7 +359,7 @@ def scale_set(periods: np.ndarray, basis: list[np.ndarray], sae: np.ndarray,
 
 
 # =============================================================================
-# 3) VARSAYILAN KAYIT KÜTÜPHANESİ — Tablo 11
+# 3) KAYIT KÜTÜPHANESİ
 # =============================================================================
 @dataclass
 class GMRecord:
@@ -371,9 +372,6 @@ class GMRecord:
     repi: float
     rjb: float
     vs30: int
-    ref_dd2: float | None = None      # Tablo 11 referans katsayıları
-    ref_dd1: float | None = None
-    default: bool = True
     checked: bool = True
     h1_path: str | None = None
     h2_path: str | None = None
@@ -391,34 +389,6 @@ class GMRecord:
     @property
     def ready(self) -> bool:
         return bool(self.h1_path and self.h2_path)
-
-
-def default_records() -> list[GMRecord]:
-    T = [
-        ("Chuetsu-oki, Japan", 6.8, "Reverse",    "MatsushiroTokamachi",
-         "CHUETSU_65006NS.AT2",  "CHUETSU_65006EW.AT2",  18.2, 25.0, 640, 2.10, 3.58),
-        ("CapeMendocino",      7.0, "Reverse",    "Fortuna-FortunaBlvd",
-         "CAPEMEND_FOR000.AT2", "CAPEMEND_FOR090.AT2",  16.0, 20.0, 457, 1.24, 2.12),
-        ("Chuetsu-oki, Japan", 6.8, "Reverse",    "SawaMizugutiTokamachi",
-         "CHUETSU_65053NS.AT2", "CHUETSU_65053EW.AT2",  21.2, 27.3, 640, 1.65, 2.83),
-        ("Manjil, Iran",       7.4, "strikeslip", "Abbar",
-         "MANJIL_ABBAR--L.AT2", "MANJIL_ABBAR--T.AT2",  12.6, 12.6, 724, 0.60, 1.03),
-        ("Landers",            7.3, "strikeslip", "NorthPalmSpringsFireSta#36",
-         "LANDERS_NPF090.AT2",  "LANDERS_NPF180.AT2",   27.0, 27.0, 368, 1.48, 2.54),
-        ("Iwate, Japan",       6.9, "Reverse",    "MYGH06",
-         "IWATE_MYGH06NS.AT2",  "IWATE_MYGH06EW.AT2",   34.5, 34.5, 593, 2.04, 3.39),
-        ("Darfield, NewZealand", 7.0, "strikeslip", "CSHS",
-         "DARFIELD_CSHSN76W.AT2", "DARFIELD_CSHSS14W.AT2", 43.6, 43.6, 638, 2.01, 3.45),
-        ("Darfield, NewZealand", 7.0, "strikeslip", "HeathcoteValleyPrimarySchool",
-         "DARFIELD_HVSCS26W.AT2", "DARFIELD_HVSCS64E.AT2", 24.4, 24.5, 422, 1.81, 3.02),
-        ("Iwate, Japan",       6.9, "Reverse",    "TamatiOno",
-         "IWATE_54009NS.AT2",   "IWATE_54009EW.AT2",    28.9, 28.9, 562, 1.27, 2.03),
-        ("Landers",            7.3, "strikeslip", "FunValley",
-         "LANDERS_FVR045.AT2",  "LANDERS_FVR135.AT2",   25.0, 25.0, 389, 2.25, 3.86),
-        ("Kocaeli, Turkey",    7.5, "strikeslip", "Iznik",
-         "KOCAELI_IZN180.AT2",  "KOCAELI_IZN090.AT2",   30.7, 30.7, 477, 0.95, 1.64),
-    ]
-    return [GMRecord(*row) for row in T]
 
 
 # =============================================================================
@@ -443,7 +413,7 @@ class Params:
 @dataclass
 class AppState:
     params: Params = field(default_factory=Params)
-    records: list[GMRecord] = field(default_factory=default_records)
+    records: list[GMRecord] = field(default_factory=list)
     periods: np.ndarray = field(default_factory=period_grid)
     results: dict | None = None          # {'levels': {...}, 'ids': [...], 'snap': Params}
 
@@ -936,9 +906,8 @@ class SpectrumPage(QWidget):
 # 9) SAYFA 2 — KAYIT KÜTÜPHANESİ
 # =============================================================================
 COLS = ["", "No", "Deprem", "Mw", "Fay\nMek.", "İstasyon", "Bileşen H1",
-        "Bileşen H2", "Epi\n(km)", "EnK\n(km)", "Vs30", "Tablo 11\nF·DD-2",
-        "Tablo 11\nF·DD-1", "Durum"]
-COL_W = [28, 34, 140, 42, 72, 144, 166, 166, 48, 48, 46, 72, 72, 90]
+        "Bileşen H2", "Epi\n(km)", "EnK\n(km)", "Vs30", "Durum"]
+COL_W = [28, 34, 140, 42, 72, 144, 166, 166, 48, 48, 46, 90]
 
 
 class RecordDialog(QDialog):
@@ -1029,8 +998,7 @@ class RecordDialog(QDialog):
             mech=self.cb_mech.currentText(), station=self.ed_stat.text().strip() or "—",
             h1=os.path.basename(self.h1.text()), h2=os.path.basename(self.h2.text()),
             repi=self.sb_repi.value(), rjb=self.sb_rjb.value(),
-            vs30=int(self.sb_vs.value()), ref_dd2=None, ref_dd1=None,
-            default=False, checked=True,
+            vs30=int(self.sb_vs.value()), checked=True,
             h1_path=self.h1.text(), h2_path=self.h2.text())
 
 
@@ -1069,7 +1037,7 @@ class RecordsPage(QWidget):
         root.addLayout(bar)
 
         card = Card("Kayıt Kütüphanesi",
-                    "Tablo 11 varsayılanları her açılışta seçili gelir · "
+                    "Kendi kayıt setinizi klasör taramasıyla ya da elle ekleyin · "
                     ".AT2 dosyaları PEER NGA biçimindedir")
         self.table = QTableWidget(0, len(COLS))
         self.table.setHorizontalHeaderLabels(COLS)
@@ -1111,19 +1079,17 @@ class RecordsPage(QWidget):
                      r.mech, r.station, r.h1, r.h2,
                      f"{r.repi:.1f}" if r.repi else "—",
                      f"{r.rjb:.1f}" if r.rjb else "—",
-                     str(r.vs30) if r.vs30 else "—",
-                     f"{r.ref_dd2:.2f}" if r.ref_dd2 else "—",
-                     f"{r.ref_dd1:.2f}" if r.ref_dd1 else "—"]
+                     str(r.vs30) if r.vs30 else "—"]
             for j, txt in enumerate(cells, start=1):
                 it = QTableWidgetItem(txt)
                 it.setToolTip(txt)
-                if j in (3, 8, 9, 10, 11, 12):
+                if j in (3, 8, 9, 10):
                     it.setTextAlignment(Qt.AlignmentFlag.AlignRight |
                                         Qt.AlignmentFlag.AlignVCenter)
                 self.table.setItem(i, j, it)
             st = QTableWidgetItem(("●  Hazır" if r.ready else "○  Dosya bekleniyor"))
             st.setForeground(QColor(th["ok"] if r.ready else th["text3"]))
-            self.table.setItem(i, 13, st)
+            self.table.setItem(i, len(COLS) - 1, st)
         self._mut = False
         self._update_chips()
 
@@ -1144,10 +1110,16 @@ class RecordsPage(QWidget):
         self.chip_evt.set_kind("ok" if not bad else "err")
         self.chip_ready.setText(f"Dosyası hazır {n_rdy}/{n_sel}")
         self.chip_ready.set_kind("accent" if n_rdy == n_sel and n_sel else "")
-        if not any(r.ready for r in recs):
+        if not recs:
+            self.hint.show_msg(
+                "info", "Kayıt kütüphanesi boş — kendi veri setinizi yükleyin.",
+                "“Kayıt Klasörünü Tara” ile PEER .AT2 dosyalarınızın bulunduğu "
+                "klasörü gösterin; yatay bileşenler otomatik eşleştirilerek kayıt "
+                "takımları kurulur. “Kayıt Ekle” ile elle de tanımlayabilirsiniz.", th)
+        elif not any(r.ready for r in recs):
             self.hint.show_msg(
                 "info", "AT2 dosyalarını eşleştirmek için klasörü tarayın.",
-                "“Kayıt Klasörünü Tara” ile Tablo 11 dosya adları alt klasörler dahil "
+                "“Kayıt Klasörünü Tara” ile dosya adları alt klasörler dahil "
                 "aranır ve otomatik eşleştirilir.", th)
         else:
             self.hint.hide()
@@ -1207,7 +1179,7 @@ class RecordsPage(QWidget):
                     self.state.records.append(GMRecord(
                         event=s["event"], mag=0.0, mech="—", station=s["station"],
                         h1=s["h1"], h2=s["h2"], repi=0.0, rjb=0.0, vs30=0,
-                        ref_dd2=None, ref_dd1=None, default=False, checked=mark,
+                        checked=mark,
                         h1_path=s["h1_path"], h2_path=s["h2_path"]))
                     added += 1
 
@@ -1259,19 +1231,10 @@ class RecordsPage(QWidget):
         rows = sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)
         if not rows:
             return
-        kept_default = False
         for row in rows:
-            if self.state.records[row].default:
-                kept_default = True
-            else:
-                del self.state.records[row]
+            del self.state.records[row]
         self.populate()
         self.changed.emit()
-        if kept_default:
-            QMessageBox.information(
-                self, APP_NAME,
-                "Tablo 11 varsayılan kayıtları kütüphaneden silinemez;\n"
-                "hesaba katmamak için onay kutusunu kaldırmanız yeterlidir.")
 
 
 # =============================================================================
@@ -1536,11 +1499,6 @@ class ScalingPage(QWidget):
         xs = np.arange(len(recs))
         ax.bar(xs, L["F"], 0.62, color=th["accent"], alpha=0.9,
                label=f"VERITAS F = f·g · {lvl}")
-        refs = [(i, (r.ref_dd2 if lvl == "DD-2" else r.ref_dd1))
-                for i, r in enumerate(recs) if r.default]
-        if refs:
-            ax.plot([i for i, _ in refs], [v for _, v in refs], "D",
-                    color=th["warn"], ms=6, ls="", label="Tablo 11 referansı")
         for x, v in zip(xs, L["F"]):
             ax.annotate(f"{v:.2f}", (x, v), textcoords="offset points",
                         xytext=(0, 4), ha="center", fontsize=8, color=th["text2"])
@@ -1614,10 +1572,9 @@ class ReportPage(QWidget):
 
         self.card_tbl = Card("Ölçek Katsayıları Özeti",
                              "F = f (bireysel, EKK) × g (grup)")
-        self.table = QTableWidget(0, 9)
+        self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
-            ["No", "Deprem", "İstasyon", "Mw",
-             "F · DD-2", "Tablo 11 · DD-2", "F · DD-1", "Tablo 11 · DD-1", "Durum"])
+            ["No", "Deprem", "İstasyon", "Mw", "F · DD-2", "F · DD-1", "Durum"])
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -1689,24 +1646,22 @@ class ReportPage(QWidget):
                 th)
         self.table.setRowCount(len(recs))
         for i, r in enumerate(recs):
-            vals = [str(i + 1), r.event, r.station, f"{r.mag:.1f}",
-                    f"{L2['F'][i]:.3f}",
-                    f"{r.ref_dd2:.2f}" if r.ref_dd2 else "—",
-                    f"{L1['F'][i]:.3f}",
-                    f"{r.ref_dd1:.2f}" if r.ref_dd1 else "—"]
+            vals = [str(i + 1), r.event, r.station,
+                    f"{r.mag:.1f}" if r.mag else "—",
+                    f"{L2['F'][i]:.3f}", f"{L1['F'][i]:.3f}"]
             for j, txt in enumerate(vals):
                 it = QTableWidgetItem(txt)
                 if j >= 3:
                     it.setTextAlignment(Qt.AlignmentFlag.AlignRight |
                                         Qt.AlignmentFlag.AlignVCenter)
-                if j in (4, 6):
+                if j in (4, 5):
                     f = it.font(); f.setBold(True); it.setFont(f)
                     it.setForeground(QColor(th["accent"]))
                 self.table.setItem(i, j, it)
             st = QTableWidgetItem("✓")
             st.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             st.setForeground(QColor(th["ok"]))
-            self.table.setItem(i, 8, st)
+            self.table.setItem(i, 6, st)
 
     # ---------------------------------------------------------------
     def _save(self, caption: str, default: str, filt: str) -> str:
@@ -1723,15 +1678,13 @@ class ReportPage(QWidget):
             w = csv.writer(f, delimiter=";")
             w.writerow(["No", "Deprem", "Mw", "Fay Mekanizmasi", "Istasyon",
                         "H1", "H2", "Episantr (km)", "En Kisa (km)", "Vs30",
-                        "f_DD2", "g_DD2", "F_DD2", "Tablo11_DD2",
-                        "f_DD1", "g_DD1", "F_DD1", "Tablo11_DD1"])
+                        "f_DD2", "g_DD2", "F_DD2",
+                        "f_DD1", "g_DD1", "F_DD1"])
             for i, r in enumerate(R["recs"]):
                 w.writerow([i + 1, r.event, r.mag, r.mech, r.station, r.h1, r.h2,
                             r.repi, r.rjb, r.vs30,
                             f"{L2['f'][i]:.4f}", f"{L2['g']:.4f}", f"{L2['F'][i]:.4f}",
-                            r.ref_dd2 or "",
-                            f"{L1['f'][i]:.4f}", f"{L1['g']:.4f}", f"{L1['F'][i]:.4f}",
-                            r.ref_dd1 or ""])
+                            f"{L1['f'][i]:.4f}", f"{L1['g']:.4f}", f"{L1['F'][i]:.4f}"])
         QMessageBox.information(self, APP_NAME, f"Kaydedildi:\n{p}")
 
     def exp_spectra(self):
@@ -1803,7 +1756,7 @@ class ReportPage(QWidget):
 # =============================================================================
 PAGES = [
     ("spectrum", "Spektrum Parametreleri", "Hedef tasarım spektrumları (DD-2 · DD-1)"),
-    ("records",  "Kayıt Kütüphanesi",      "Tablo 11 varsayılanları + kullanıcı kayıtları"),
+    ("records",  "Kayıt Kütüphanesi",      "Kullanıcı .AT2 kayıt takımları (PEER NGA)"),
     ("scale",    "Ölçeklendirme",          "TBDY 2018 §2.5 basit ölçeklendirme ve grafikler"),
     ("report",   "Rapor & Dışa Aktarım",   "Katsayı özeti · CSV / PNG / TXT çıktıları"),
 ]
