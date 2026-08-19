@@ -10,7 +10,14 @@ tepki spektrumlarını hesaplar ve TBDY 2018 Bölüm 2.5'e göre basit (genlik)
                 0.2·Tp – 1.5·Tp aralığında 1.3·Sae(T)'den küçük olamaz.
   · 2B analiz : bileşen spektrumlarının ortalaması Sae(T)'den küçük olamaz.
 
-Varsayılan kayıt kütüphanesi: Tablo 11 (11 kayıt takımı, PEER NGA-West2).
+Kayıt kütüphanesi boş açılır; kullanıcı kendi .AT2 veri setini klasör
+taramasıyla ya da elle ekleyerek yükler.
+
+Ek özellikler:
+  · Δt uyumlaştırma — farklı örnekleme adımlı kayıtlar ortak (en ince)
+    Δt'ye yeniden örneklenir; ölçekleme sırasında ivme değeri kaybolmaz.
+  · Proje kaydetme/açma (.vts, JSON) — parametreler ve kayıt kütüphanesi.
+  · Kapsamlı HTML rapor (gömülü grafiklerle, tek dosya).
 
 Gereksinimler:  Python ≥ 3.10,  PyQt6,  numpy,  matplotlib
 Çalıştırma:     python VERITAS_TBDY2018_Olcekleme.py
@@ -18,11 +25,16 @@ Gereksinimler:  Python ≥ 3.10,  PyQt6,  numpy,  matplotlib
 
 from __future__ import annotations
 
+import base64
 import csv
+import io
+import json
 import os
 import re
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime
+from html import escape as _esc
 
 import numpy as np
 
@@ -46,7 +58,10 @@ from matplotlib import font_manager as _fm
 
 APP_NAME = "VERITAS"
 APP_SUB = "Deprem Kayıtları Seçimi ve Ölçeklendirme · TBDY 2018"
-APP_VER = "v1.0"
+APP_VER = "v1.1"
+PROJ_FORMAT = "veritas-project"        # .vts proje dosyası kimliği
+PROJ_VERSION = 1
+PROJ_FILTER = "VERITAS Projesi (*.vts);;JSON (*.json);;Tümü (*)"
 
 # =============================================================================
 # 1) TASARIM JETONLARI  (4 px ızgara · açık/koyu tema)
@@ -88,6 +103,7 @@ ICO = dict(  # Material Symbols Rounded kod noktaları
     dark=0xE51C, light=0xE518, folder=0xE2C8, add=0xE990, run=0xEA0B,
     export=0xF090, ok=0xF0BE, err=0xF8B6, warn=0xF083, stat=0xF190,
     doc=0xE873, trash=0xE92E, all=0xE877, none=0xE9D3,
+    save=0xE161, sync=0xE627, info=0xE88E, html=0xE051,
 )
 
 
@@ -166,6 +182,23 @@ def read_at2(path: str) -> tuple[float, np.ndarray]:
     if len(vals) < npts:
         raise ValueError(f"Veri eksik: {len(vals)}/{npts} örnek.")
     return dt, np.asarray(vals[:npts], float)
+
+
+def resample_series(acc: np.ndarray, dt_old: float, dt_new: float) -> np.ndarray:
+    """İvme serisini dt_new zaman adımına doğrusal ara değerle yeniden örnekler.
+
+    Hedef adım her zaman takımdaki EN İNCE Δt seçildiğinden, kaba adımlı
+    seriler incelirken kaybolan örnek olmaz; Δt'nin tam katı durumlarında
+    (ör. 0.02 s → 0.01 s) özgün örnek anları birebir korunur.
+    """
+    acc = np.asarray(acc, float)
+    if abs(dt_old - dt_new) < 1e-12:
+        return acc.copy()
+    t_end = (acc.size - 1) * dt_old
+    n_new = int(np.floor(t_end / dt_new + 1e-9)) + 1
+    t_new = np.arange(n_new) * dt_new
+    t_old = np.arange(acc.size) * dt_old
+    return np.interp(t_new, t_old, acc)
 
 
 # --- PEER dosya adı çözümleme -------------------------------------------------
@@ -358,7 +391,7 @@ def scale_set(periods: np.ndarray, basis: list[np.ndarray], sae: np.ndarray,
 
 
 # =============================================================================
-# 3) VARSAYILAN KAYIT KÜTÜPHANESİ — Tablo 11
+# 3) KAYIT KÜTÜPHANESİ
 # =============================================================================
 @dataclass
 class GMRecord:
@@ -371,9 +404,6 @@ class GMRecord:
     repi: float
     rjb: float
     vs30: int
-    ref_dd2: float | None = None      # Tablo 11 referans katsayıları
-    ref_dd1: float | None = None
-    default: bool = True
     checked: bool = True
     h1_path: str | None = None
     h2_path: str | None = None
@@ -392,33 +422,26 @@ class GMRecord:
     def ready(self) -> bool:
         return bool(self.h1_path and self.h2_path)
 
+    # --- proje dosyası serileştirme -----------------------------------
+    def to_dict(self) -> dict:
+        return dict(event=self.event, mag=self.mag, mech=self.mech,
+                    station=self.station, h1=self.h1, h2=self.h2,
+                    repi=self.repi, rjb=self.rjb, vs30=self.vs30,
+                    checked=self.checked,
+                    h1_path=self.h1_path, h2_path=self.h2_path)
 
-def default_records() -> list[GMRecord]:
-    T = [
-        ("Chuetsu-oki, Japan", 6.8, "Reverse",    "MatsushiroTokamachi",
-         "CHUETSU_65006NS.AT2",  "CHUETSU_65006EW.AT2",  18.2, 25.0, 640, 2.10, 3.58),
-        ("CapeMendocino",      7.0, "Reverse",    "Fortuna-FortunaBlvd",
-         "CAPEMEND_FOR000.AT2", "CAPEMEND_FOR090.AT2",  16.0, 20.0, 457, 1.24, 2.12),
-        ("Chuetsu-oki, Japan", 6.8, "Reverse",    "SawaMizugutiTokamachi",
-         "CHUETSU_65053NS.AT2", "CHUETSU_65053EW.AT2",  21.2, 27.3, 640, 1.65, 2.83),
-        ("Manjil, Iran",       7.4, "strikeslip", "Abbar",
-         "MANJIL_ABBAR--L.AT2", "MANJIL_ABBAR--T.AT2",  12.6, 12.6, 724, 0.60, 1.03),
-        ("Landers",            7.3, "strikeslip", "NorthPalmSpringsFireSta#36",
-         "LANDERS_NPF090.AT2",  "LANDERS_NPF180.AT2",   27.0, 27.0, 368, 1.48, 2.54),
-        ("Iwate, Japan",       6.9, "Reverse",    "MYGH06",
-         "IWATE_MYGH06NS.AT2",  "IWATE_MYGH06EW.AT2",   34.5, 34.5, 593, 2.04, 3.39),
-        ("Darfield, NewZealand", 7.0, "strikeslip", "CSHS",
-         "DARFIELD_CSHSN76W.AT2", "DARFIELD_CSHSS14W.AT2", 43.6, 43.6, 638, 2.01, 3.45),
-        ("Darfield, NewZealand", 7.0, "strikeslip", "HeathcoteValleyPrimarySchool",
-         "DARFIELD_HVSCS26W.AT2", "DARFIELD_HVSCS64E.AT2", 24.4, 24.5, 422, 1.81, 3.02),
-        ("Iwate, Japan",       6.9, "Reverse",    "TamatiOno",
-         "IWATE_54009NS.AT2",   "IWATE_54009EW.AT2",    28.9, 28.9, 562, 1.27, 2.03),
-        ("Landers",            7.3, "strikeslip", "FunValley",
-         "LANDERS_FVR045.AT2",  "LANDERS_FVR135.AT2",   25.0, 25.0, 389, 2.25, 3.86),
-        ("Kocaeli, Turkey",    7.5, "strikeslip", "Iznik",
-         "KOCAELI_IZN180.AT2",  "KOCAELI_IZN090.AT2",   30.7, 30.7, 477, 0.95, 1.64),
-    ]
-    return [GMRecord(*row) for row in T]
+    @staticmethod
+    def from_dict(d: dict) -> "GMRecord":
+        p1, p2 = d.get("h1_path"), d.get("h2_path")
+        if not (p1 and p2 and os.path.isfile(p1) and os.path.isfile(p2)):
+            p1 = p2 = None            # dosya taşınmış → yeniden tarama gerekir
+        return GMRecord(
+            event=str(d["event"]), mag=float(d.get("mag") or 0.0),
+            mech=str(d.get("mech") or "—"), station=str(d.get("station") or "—"),
+            h1=str(d["h1"]), h2=str(d["h2"]),
+            repi=float(d.get("repi") or 0.0), rjb=float(d.get("rjb") or 0.0),
+            vs30=int(d.get("vs30") or 0), checked=bool(d.get("checked", True)),
+            h1_path=p1, h2_path=p2)
 
 
 # =============================================================================
@@ -443,7 +466,7 @@ class Params:
 @dataclass
 class AppState:
     params: Params = field(default_factory=Params)
-    records: list[GMRecord] = field(default_factory=default_records)
+    records: list[GMRecord] = field(default_factory=list)
     periods: np.ndarray = field(default_factory=period_grid)
     results: dict | None = None          # {'levels': {...}, 'ids': [...], 'snap': Params}
 
@@ -466,10 +489,15 @@ class ComputeWorker(QThread):
             step = 0
             out = {}
             for r in self.records:
-                for comp, path in (("H1", r.h1_path), ("H2", r.h2_path)):
+                for comp, path, dt_c, acc_c in (
+                        ("H1", r.h1_path, r.dt1, r.acc1),
+                        ("H2", r.h2_path, r.dt2, r.acc2)):
                     step += 1
                     self.progress.emit(step, total, f"{r.station} · {comp}")
-                    dt, acc = read_at2(path)
+                    if acc_c is not None and dt_c is not None:
+                        dt, acc = dt_c, acc_c     # Δt uyumlaştırılmış önbellek
+                    else:
+                        dt, acc = read_at2(path)
                     sa = response_spectrum(acc, dt, self.periods)
                     out.setdefault(id(r), {})[comp] = (dt, acc, sa)
             self.done.emit(out)
@@ -621,6 +649,31 @@ QScrollBar::handle:horizontal {{ background:{t['border2']}; border-radius:4px;
 QScrollBar::add-line, QScrollBar::sub-line {{ width:0; height:0; }}
 QScrollArea {{ border:none; background:transparent; }}
 #Scroller, #Scroller > QWidget > QWidget {{ background:transparent; }}
+
+/* ---- Menü çubuğu ---- */
+QMenuBar {{ background:{t['surface']}; border-bottom:1px solid {t['border']};
+            padding:2px {SP2}px; }}
+QMenuBar::item {{ background:transparent; color:{t['text2']};
+    padding:{SP1}px {SP3}px; border-radius:{RAD_S}px; font-weight:600; }}
+QMenuBar::item:selected {{ background:{t['sunken']}; color:{t['text']}; }}
+QMenuBar::item:pressed  {{ background:{t['accent_soft']}; color:{t['accent']}; }}
+QMenu {{ background:{t['surface']}; border:1px solid {t['border2']};
+         border-radius:{RAD_S}px; padding:{SP1}px; }}
+QMenu::item {{ padding:{SP1+2}px {SP6}px {SP1+2}px {SP3}px;
+               border-radius:{RAD_S}px; color:{t['text']}; }}
+QMenu::item:selected {{ background:{t['accent_soft']}; color:{t['accent']}; }}
+QMenu::item:disabled {{ color:{t['text3']}; }}
+QMenu::separator {{ height:1px; background:{t['border']};
+                    margin:{SP1}px {SP2}px; }}
+
+/* ---- Hakkında ---- */
+#AboutName {{ font-family:'{FONT_HEAD}'; font-size:24px; font-weight:700; }}
+#AboutVer  {{ color:{t['accent']}; background:{t['accent_soft']};
+              border-radius:{RAD_S}px; padding:2px {SP2}px;
+              font-size:11px; font-weight:700; }}
+#AboutSub  {{ color:{t['text2']}; font-size:12px; }}
+#AboutBody {{ color:{t['text2']}; font-size:12px; }}
+#AboutFoot {{ color:{t['text3']}; font-size:10.5px; }}
 """
 
 
@@ -887,6 +940,23 @@ class SpectrumPage(QWidget):
         root.addWidget(self.card_plot, 1)
 
     # ---------------------------------------------------------------
+    def sync_from_state(self):
+        """Proje açıldığında girdi bileşenlerini state.params'tan doldurur."""
+        p = self.state.params
+        for key in ("ss_dd2", "s1_dd2", "ss_dd1", "s1_dd1"):
+            w = self.sp[key]
+            w.blockSignals(True)
+            w.setValue(getattr(p, key))
+            w.blockSignals(False)
+        for w, setv in ((self.cb_soil, lambda: self.cb_soil.setCurrentText(p.soil)),
+                        (self.sb_tp, lambda: self.sb_tp.setValue(p.tp)),
+                        (self.cb_mode, lambda: self.cb_mode.setCurrentIndex(
+                            0 if p.mode3d else 1))):
+            w.blockSignals(True)
+            setv()
+            w.blockSignals(False)
+        self.refresh(theme_of(self))
+
     def _on_change(self, *_):
         p = self.state.params
         p.ss_dd2 = self.sp["ss_dd2"].value(); p.s1_dd2 = self.sp["s1_dd2"].value()
@@ -936,9 +1006,8 @@ class SpectrumPage(QWidget):
 # 9) SAYFA 2 — KAYIT KÜTÜPHANESİ
 # =============================================================================
 COLS = ["", "No", "Deprem", "Mw", "Fay\nMek.", "İstasyon", "Bileşen H1",
-        "Bileşen H2", "Epi\n(km)", "EnK\n(km)", "Vs30", "Tablo 11\nF·DD-2",
-        "Tablo 11\nF·DD-1", "Durum"]
-COL_W = [28, 34, 140, 42, 72, 144, 166, 166, 48, 48, 46, 72, 72, 90]
+        "Bileşen H2", "Epi\n(km)", "EnK\n(km)", "Vs30", "Durum"]
+COL_W = [28, 34, 140, 42, 72, 144, 166, 166, 48, 48, 46, 90]
 
 
 class RecordDialog(QDialog):
@@ -1029,8 +1098,7 @@ class RecordDialog(QDialog):
             mech=self.cb_mech.currentText(), station=self.ed_stat.text().strip() or "—",
             h1=os.path.basename(self.h1.text()), h2=os.path.basename(self.h2.text()),
             repi=self.sb_repi.value(), rjb=self.sb_rjb.value(),
-            vs30=int(self.sb_vs.value()), ref_dd2=None, ref_dd1=None,
-            default=False, checked=True,
+            vs30=int(self.sb_vs.value()), checked=True,
             h1_path=self.h1.text(), h2_path=self.h2.text())
 
 
@@ -1052,13 +1120,19 @@ class RecordsPage(QWidget):
         self.bt_folder.clicked.connect(self.scan_folder)
         self.bt_add = QPushButton("  Kayıt Ekle")
         self.bt_add.clicked.connect(self.add_record)
+        self.bt_dt = QPushButton("  Δt Uyumlaştır")
+        self.bt_dt.setToolTip(
+            "Seçili kayıtların ivme serilerini ortak (en ince) Δt zaman adımına\n"
+            "yeniden örnekler; ölçekleme sırasında ivme değeri kaybolmaz.")
+        self.bt_dt.clicked.connect(self.harmonize_dt)
         self.bt_del = QPushButton("  Kaldır")
         self.bt_del.clicked.connect(self.remove_selected)
         self.bt_all = QPushButton("  Tümünü Seç")
         self.bt_all.clicked.connect(lambda: self._set_all(True))
         self.bt_none = QPushButton("  Seçimi Kaldır")
         self.bt_none.clicked.connect(lambda: self._set_all(False))
-        for b in (self.bt_folder, self.bt_add, self.bt_del, self.bt_all, self.bt_none):
+        for b in (self.bt_folder, self.bt_add, self.bt_dt, self.bt_del,
+                  self.bt_all, self.bt_none):
             bar.addWidget(b)
         bar.addStretch(1)
         self.chip_n = Chip("", "accent")
@@ -1069,7 +1143,7 @@ class RecordsPage(QWidget):
         root.addLayout(bar)
 
         card = Card("Kayıt Kütüphanesi",
-                    "Tablo 11 varsayılanları her açılışta seçili gelir · "
+                    "Kendi kayıt setinizi klasör taramasıyla ya da elle ekleyin · "
                     ".AT2 dosyaları PEER NGA biçimindedir")
         self.table = QTableWidget(0, len(COLS))
         self.table.setHorizontalHeaderLabels(COLS)
@@ -1111,19 +1185,24 @@ class RecordsPage(QWidget):
                      r.mech, r.station, r.h1, r.h2,
                      f"{r.repi:.1f}" if r.repi else "—",
                      f"{r.rjb:.1f}" if r.rjb else "—",
-                     str(r.vs30) if r.vs30 else "—",
-                     f"{r.ref_dd2:.2f}" if r.ref_dd2 else "—",
-                     f"{r.ref_dd1:.2f}" if r.ref_dd1 else "—"]
+                     str(r.vs30) if r.vs30 else "—"]
             for j, txt in enumerate(cells, start=1):
                 it = QTableWidgetItem(txt)
                 it.setToolTip(txt)
-                if j in (3, 8, 9, 10, 11, 12):
+                if j in (3, 8, 9, 10):
                     it.setTextAlignment(Qt.AlignmentFlag.AlignRight |
                                         Qt.AlignmentFlag.AlignVCenter)
                 self.table.setItem(i, j, it)
-            st = QTableWidgetItem(("●  Hazır" if r.ready else "○  Dosya bekleniyor"))
+            if r.ready and r.dt1 and r.dt2:
+                dts = (f"Δt {r.dt1:g} s" if abs(r.dt1 - r.dt2) < 1e-12
+                       else f"Δt {r.dt1:g}/{r.dt2:g} s")
+                st = QTableWidgetItem(f"●  Hazır · {dts}")
+            else:
+                st = QTableWidgetItem("●  Hazır" if r.ready
+                                      else "○  Dosya bekleniyor")
             st.setForeground(QColor(th["ok"] if r.ready else th["text3"]))
-            self.table.setItem(i, 13, st)
+            st.setToolTip(st.text())
+            self.table.setItem(i, len(COLS) - 1, st)
         self._mut = False
         self._update_chips()
 
@@ -1144,10 +1223,16 @@ class RecordsPage(QWidget):
         self.chip_evt.set_kind("ok" if not bad else "err")
         self.chip_ready.setText(f"Dosyası hazır {n_rdy}/{n_sel}")
         self.chip_ready.set_kind("accent" if n_rdy == n_sel and n_sel else "")
-        if not any(r.ready for r in recs):
+        if not recs:
+            self.hint.show_msg(
+                "info", "Kayıt kütüphanesi boş — kendi veri setinizi yükleyin.",
+                "“Kayıt Klasörünü Tara” ile PEER .AT2 dosyalarınızın bulunduğu "
+                "klasörü gösterin; yatay bileşenler otomatik eşleştirilerek kayıt "
+                "takımları kurulur. “Kayıt Ekle” ile elle de tanımlayabilirsiniz.", th)
+        elif not any(r.ready for r in recs):
             self.hint.show_msg(
                 "info", "AT2 dosyalarını eşleştirmek için klasörü tarayın.",
-                "“Kayıt Klasörünü Tara” ile Tablo 11 dosya adları alt klasörler dahil "
+                "“Kayıt Klasörünü Tara” ile dosya adları alt klasörler dahil "
                 "aranır ve otomatik eşleştirilir.", th)
         else:
             self.hint.hide()
@@ -1178,6 +1263,9 @@ class RecordsPage(QWidget):
         for r in self.state.records:
             p1, p2 = index.get(r.h1.lower()), index.get(r.h2.lower())
             if p1 and p2:
+                if (p1, p2) != (r.h1_path, r.h2_path):
+                    r.acc1 = r.acc2 = r.sa1 = r.sa2 = None
+                    r.dt1 = r.dt2 = None
                 r.h1_path, r.h2_path = p1, p2
                 hit += 1
 
@@ -1207,7 +1295,7 @@ class RecordsPage(QWidget):
                     self.state.records.append(GMRecord(
                         event=s["event"], mag=0.0, mech="—", station=s["station"],
                         h1=s["h1"], h2=s["h2"], repi=0.0, rjb=0.0, vs30=0,
-                        ref_dd2=None, ref_dd1=None, default=False, checked=mark,
+                        checked=mark,
                         h1_path=s["h1_path"], h2_path=s["h2_path"]))
                     added += 1
 
@@ -1237,6 +1325,72 @@ class RecordsPage(QWidget):
             self.hint.show_msg(
                 "ok", f"{hit + added} kayıt takımının tamamı hazır.", detail, th)
 
+    def harmonize_dt(self):
+        """Seçili kayıtların ivme serilerini ortak (en ince) Δt'ye örnekler.
+
+        Hedef adım, takımdaki en küçük Δt'dir: kaba adımlı seriler ince
+        adıma taşınır, hiçbir serinin örneği atılmaz. Böylece farklı
+        örnekleme adımlı kayıtlar birlikte ölçeklenirken veri kaybolmaz.
+        """
+        th = theme_of(self)
+        recs = [r for r in self.state.records if r.checked and r.ready]
+        if not recs:
+            self.hint.show_msg(
+                "warn", "Δt uyumu için hazır kayıt yok.",
+                "Önce kayıtları seçin ve .AT2 dosyalarını eşleştirin.", th)
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        errors: list[str] = []
+        try:
+            for r in recs:                       # serileri yükle (önbellek yoksa)
+                try:
+                    if r.acc1 is None or r.dt1 is None:
+                        r.dt1, r.acc1 = read_at2(r.h1_path)
+                    if r.acc2 is None or r.dt2 is None:
+                        r.dt2, r.acc2 = read_at2(r.h2_path)
+                except (OSError, ValueError) as ex:
+                    errors.append(f"{r.h1}: {ex}")
+            loaded = [r for r in recs
+                      if r.acc1 is not None and r.acc2 is not None]
+            if not loaded:
+                self.hint.show_msg("err", "Hiçbir kayıt okunamadı.",
+                                   "  ".join(errors[:3]), th)
+                return
+            dts = sorted({round(float(d), 9) for r in loaded
+                          for d in (r.dt1, r.dt2)})
+            dt_t = dts[0]                        # en ince adım hedeftir
+            n_rs = 0
+            for r in loaded:
+                if abs(r.dt1 - dt_t) > 1e-12:
+                    r.acc1 = resample_series(r.acc1, r.dt1, dt_t)
+                    r.dt1, r.sa1 = dt_t, None
+                    n_rs += 1
+                if abs(r.dt2 - dt_t) > 1e-12:
+                    r.acc2 = resample_series(r.acc2, r.dt2, dt_t)
+                    r.dt2, r.sa2 = dt_t, None
+                    n_rs += 1
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.populate()
+        if n_rs:
+            self.changed.emit()                  # sonuçlar geçersiz → yeniden hesap
+        if errors:
+            self.hint.show_msg(
+                "warn", f"{len(errors)} kayıt okunamadı; kalanlar uyumlaştırıldı.",
+                "  ".join(errors[:3]), th)
+        elif len(dts) == 1:
+            self.hint.show_msg(
+                "ok", f"Tüm bileşenler zaten ortak Δt = {dt_t:g} s adımında.",
+                "Yeniden örnekleme gerekmedi; seriler değiştirilmedi.", th)
+        else:
+            self.hint.show_msg(
+                "ok",
+                f"Ortak Δt = {dt_t:g} s — {n_rs} bileşen yeniden örneklendi.",
+                "Bulunan adımlar: " + ", ".join(f"{d:g} s" for d in dts) +
+                " · En ince adım hedef alındığından ivme değerleri "
+                "kaybolmadı. Ölçeklendirme sayfasından yeniden “Hesapla” "
+                "çalıştırın.", th)
+
     def add_record(self):
         dlg = RecordDialog(self)
         if dlg.exec():
@@ -1259,19 +1413,10 @@ class RecordsPage(QWidget):
         rows = sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)
         if not rows:
             return
-        kept_default = False
         for row in rows:
-            if self.state.records[row].default:
-                kept_default = True
-            else:
-                del self.state.records[row]
+            del self.state.records[row]
         self.populate()
         self.changed.emit()
-        if kept_default:
-            QMessageBox.information(
-                self, APP_NAME,
-                "Tablo 11 varsayılan kayıtları kütüphaneden silinemez;\n"
-                "hesaba katmamak için onay kutusunu kaldırmanız yeterlidir.")
 
 
 # =============================================================================
@@ -1536,11 +1681,6 @@ class ScalingPage(QWidget):
         xs = np.arange(len(recs))
         ax.bar(xs, L["F"], 0.62, color=th["accent"], alpha=0.9,
                label=f"VERITAS F = f·g · {lvl}")
-        refs = [(i, (r.ref_dd2 if lvl == "DD-2" else r.ref_dd1))
-                for i, r in enumerate(recs) if r.default]
-        if refs:
-            ax.plot([i for i, _ in refs], [v for _, v in refs], "D",
-                    color=th["warn"], ms=6, ls="", label="Tablo 11 referansı")
         for x, v in zip(xs, L["F"]):
             ax.annotate(f"{v:.2f}", (x, v), textcoords="offset points",
                         xytext=(0, 4), ha="center", fontsize=8, color=th["text2"])
@@ -1579,7 +1719,351 @@ class ScalingPage(QWidget):
 
 
 # =============================================================================
-# 11) SAYFA 4 — RAPOR & DIŞA AKTARIM
+# 11) HTML RAPOR ÜRETİCİ
+# =============================================================================
+def _fig_b64(fig: Figure) -> str:
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150,
+                facecolor=fig.get_facecolor(), bbox_inches="tight")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _report_charts(state: AppState) -> dict[str, str]:
+    """Rapor grafiklerini (açık tema, baskı dostu) base64 PNG olarak üretir."""
+    R, p, th = state.results, state.params, LIGHT
+    per, tp = R["periods"], R["tp"]
+
+    def style(ax, xlab, ylab):
+        for s in ("top", "right"):
+            ax.spines[s].set_visible(False)
+        ax.grid(True, color=th["grid"], lw=0.7, alpha=0.6)
+        ax.tick_params(labelsize=9, colors=th["text2"])
+        ax.set_xlabel(xlab, fontsize=10, color=th["text2"])
+        ax.set_ylabel(ylab, fontsize=10, color=th["text2"])
+        ax.margins(x=0)
+
+    out = {}
+    # -- hedef spektrumlar --
+    fig = Figure(figsize=(7.4, 3.6), dpi=100, layout="constrained")
+    ax = fig.add_subplot(111)
+    ax.axvspan(0.2 * tp, 1.5 * tp, color=th["accent"], alpha=0.08, lw=0)
+    T = np.linspace(1e-4, 8.0, 500)
+    for lvl, color in (("DD-1", th["err"]), ("DD-2", th["accent"])):
+        L = R["levels"][lvl]
+        ax.plot(T, design_spectrum(T, L["sds"], L["sd1"]),
+                color=color, lw=2.0, label=f"Sae(T) · {lvl}")
+    ax.set_xlim(0, 8)
+    ax.set_ylim(bottom=0)
+    style(ax, "Periyot T (s)", "Sae (g)")
+    ax.legend(frameon=False, fontsize=9)
+    out["target"] = _fig_b64(fig)
+
+    # -- düzey bazında ölçekli ortalama / hedef --
+    x0, x1 = max(0.02, 0.1 * tp), min(8.0, 2.2 * tp)
+    for lvl in ("DD-2", "DD-1"):
+        L = R["levels"][lvl]
+        fig = Figure(figsize=(7.4, 3.6), dpi=100, layout="constrained")
+        ax = fig.add_subplot(111)
+        ax.axvspan(0.2 * tp, 1.5 * tp, color=th["accent"], alpha=0.08, lw=0)
+        for b, fi in zip(R["basis"], L["f"]):
+            ax.plot(per, fi * L["g"] * b, color=th["series"], lw=0.7, alpha=0.55)
+        ax.plot(per, L["mean_scaled"], color=th["accent"], lw=2.4,
+                label="Ölçekli ortalama")
+        ax.plot(per, L["target"], color=th["err"], lw=2.0, ls="--",
+                label=f"{L['k']:.1f}·Sae hedefi")
+        ax.plot(L["t_crit"], np.interp(L["t_crit"], per, L["mean_scaled"]),
+                "o", color=th["err"], ms=6,
+                label=f"Kritik nokta (oran {L['min_ratio']:.3f})")
+        ax.set_xlim(x0, x1)
+        ax.set_ylim(bottom=0)
+        style(ax, "Periyot T (s)", "Sa (g)")
+        ax.legend(frameon=False, fontsize=9)
+        out[f"scaled_{lvl}"] = _fig_b64(fig)
+
+    # -- katsayı çubukları (iki düzey yan yana) --
+    recs = R["recs"]
+    xs = np.arange(len(recs))
+    fig = Figure(figsize=(7.4, 3.4), dpi=100, layout="constrained")
+    ax = fig.add_subplot(111)
+    ax.bar(xs - 0.19, R["levels"]["DD-2"]["F"], 0.36,
+           color=th["accent"], label="F · DD-2")
+    ax.bar(xs + 0.19, R["levels"]["DD-1"]["F"], 0.36,
+           color=th["err"], alpha=0.85, label="F · DD-1")
+    ax.set_xticks(xs, [r.station[:14] for r in recs],
+                  rotation=35, ha="right", fontsize=8)
+    ax.set_ylim(bottom=0)
+    style(ax, "", "Ölçek katsayısı F")
+    ax.legend(frameon=False, fontsize=9)
+    out["coeffs"] = _fig_b64(fig)
+    return out
+
+
+def build_html_report(state: AppState) -> str:
+    """Tek dosyalık, gömülü grafikli kapsamlı HTML rapor (Türkçe)."""
+    if not state.results:
+        raise ValueError("Önce ölçeklendirme hesaplanmalıdır.")
+    R, p = state.results, state.params
+    L2, L1 = R["levels"]["DD-2"], R["levels"]["DD-1"]
+    th = LIGHT
+    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    charts = _report_charts(state)
+    ok = L2["passed"] and L1["passed"]
+
+    def badge(passed: bool) -> str:
+        return ('<span class="badge ok">SAĞLANDI</span>' if passed
+                else '<span class="badge err">SAĞLANMADI</span>')
+
+    # ---- girdi parametreleri ----
+    par_rows = []
+    for lvl, L in (("DD-2", L2), ("DD-1", L1)):
+        ss, s1 = ((p.ss_dd2, p.s1_dd2) if lvl == "DD-2"
+                  else (p.ss_dd1, p.s1_dd1))
+        fs, f1 = site_coeffs(ss, s1, p.soil)
+        ta, tb = 0.2 * L["sd1"] / L["sds"], L["sd1"] / L["sds"]
+        par_rows.append(
+            f"<tr><td><b>{lvl}</b></td><td>{ss:.3f}</td><td>{s1:.3f}</td>"
+            f"<td>{fs:.3f}</td><td>{f1:.3f}</td><td>{L['sds']:.3f}</td>"
+            f"<td>{L['sd1']:.3f}</td><td>{ta:.3f}</td><td>{tb:.3f}</td></tr>")
+
+    # ---- kayıt kütüphanesi ----
+    rec_rows = []
+    for i, r in enumerate(R["recs"]):
+        dur = (r.acc1.size - 1) * r.dt1
+        pga1 = float(np.max(np.abs(r.acc1)))
+        pga2 = float(np.max(np.abs(r.acc2)))
+        dt_txt = (f"{r.dt1:g}" if abs(r.dt1 - r.dt2) < 1e-12
+                  else f"{r.dt1:g}/{r.dt2:g}")
+        rec_rows.append(
+            f"<tr><td>{i+1}</td><td>{_esc(r.event)}</td>"
+            f"<td>{f'{r.mag:.1f}' if r.mag else '—'}</td>"
+            f"<td>{_esc(r.mech)}</td><td>{_esc(r.station)}</td>"
+            f"<td class='mono'>{_esc(r.h1)}<br>{_esc(r.h2)}</td>"
+            f"<td>{f'{r.repi:.1f}' if r.repi else '—'}</td>"
+            f"<td>{f'{r.rjb:.1f}' if r.rjb else '—'}</td>"
+            f"<td>{r.vs30 or '—'}</td><td>{dt_txt}</td>"
+            f"<td>{dur:.1f}</td><td>{pga1:.3f} / {pga2:.3f}</td></tr>")
+
+    # ---- katsayılar ----
+    co_rows = []
+    for i, r in enumerate(R["recs"]):
+        co_rows.append(
+            f"<tr><td>{i+1}</td><td>{_esc(r.event)}</td>"
+            f"<td>{_esc(r.station)}</td>"
+            f"<td>{L2['f'][i]:.4f}</td><td><b>{L2['F'][i]:.4f}</b></td>"
+            f"<td>{L1['f'][i]:.4f}</td><td><b>{L1['F'][i]:.4f}</b></td>"
+            f"<td>{L2['F'][i]*float(np.max(np.abs(r.acc1))):.3f} / "
+            f"{L2['F'][i]*float(np.max(np.abs(r.acc2))):.3f}</td></tr>")
+
+    warns_html = ""
+    if R["warns"]:
+        items = "".join(f"<li>{_esc(w)}</li>" for w in R["warns"])
+        warns_html = (f'<div class="callout warn"><b>Seçim ölçütü uyarıları'
+                      f"</b><ul>{items}</ul></div>")
+
+    mode_txt = ("3B — SRSS spektrumlarının ortalaması ≥ 1.3·Sae(T)"
+                if R["mode3d"] else
+                "2B — bileşen spektrumlarının ortalaması ≥ 1.0·Sae(T)")
+    band_txt = f"{0.2*R['tp']:.2f} – {1.5*R['tp']:.2f} s"
+
+    return f"""<!DOCTYPE html>
+<html lang="tr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VERITAS Ölçeklendirme Raporu</title>
+<style>
+ :root {{ --bg:{th['bg']}; --sur:{th['surface']}; --bd:{th['border']};
+   --tx:{th['text']}; --tx2:{th['text2']}; --tx3:{th['text3']};
+   --ac:{th['accent']}; --acs:{th['accent_soft']}; --ok:{th['ok']};
+   --oks:{th['ok_soft']}; --er:{th['err']}; --ers:{th['err_soft']};
+   --wr:{th['warn']}; --wrs:{th['warn_soft']}; }}
+ * {{ box-sizing:border-box; }}
+ body {{ margin:0; background:var(--bg); color:var(--tx);
+   font:14px/1.55 Inter,'Segoe UI',system-ui,sans-serif; }}
+ .wrap {{ max-width:960px; margin:0 auto; padding:40px 28px 56px; }}
+ header {{ border-bottom:2px solid var(--ac); padding-bottom:16px;
+   margin-bottom:28px; display:flex; justify-content:space-between;
+   align-items:flex-end; flex-wrap:wrap; gap:8px; }}
+ h1 {{ margin:0; font-size:26px; letter-spacing:1px; }}
+ h1 small {{ color:var(--ac); font-size:13px; letter-spacing:0;
+   font-weight:700; vertical-align:middle; margin-left:8px; }}
+ .sub {{ color:var(--tx2); font-size:12.5px; }}
+ h2 {{ font-size:16px; margin:34px 0 10px; padding-bottom:6px;
+   border-bottom:1px solid var(--bd); }}
+ table {{ width:100%; border-collapse:collapse; background:var(--sur);
+   font-size:12px; border:1px solid var(--bd); border-radius:8px;
+   overflow:hidden; }}
+ th {{ background:#F8FAFC; color:var(--tx2); text-align:left;
+   padding:8px 9px; font-size:11px; border-bottom:1px solid var(--bd); }}
+ td {{ padding:6px 9px; border-bottom:1px solid var(--bd);
+   vertical-align:top; }}
+ tr:last-child td {{ border-bottom:none; }}
+ .mono {{ font-family:ui-monospace,Consolas,monospace; font-size:10.5px; }}
+ .badge {{ display:inline-block; border-radius:6px; padding:2px 10px;
+   font-size:11px; font-weight:700; }}
+ .badge.ok {{ background:var(--oks); color:var(--ok); }}
+ .badge.err {{ background:var(--ers); color:var(--er); }}
+ .cards {{ display:flex; gap:10px; flex-wrap:wrap; margin:14px 0; }}
+ .card {{ flex:1 1 130px; background:var(--sur); border:1px solid var(--bd);
+   border-radius:10px; padding:10px 14px; }}
+ .card b {{ display:block; font-size:16px; }}
+ .card span {{ color:var(--tx2); font-size:11px; }}
+ .callout {{ border-radius:10px; padding:12px 16px; margin:14px 0;
+   font-size:12.5px; }}
+ .callout.ok   {{ background:var(--oks); border:1px solid var(--ok); }}
+ .callout.err  {{ background:var(--ers); border:1px solid var(--er); }}
+ .callout.warn {{ background:var(--wrs); border:1px solid var(--wr); }}
+ .callout ul {{ margin:6px 0 0 18px; padding:0; }}
+ img.chart {{ width:100%; border:1px solid var(--bd); border-radius:10px;
+   background:var(--sur); margin:8px 0 4px; }}
+ figcaption {{ color:var(--tx3); font-size:11px; margin-bottom:14px; }}
+ footer {{ margin-top:44px; padding-top:12px; border-top:1px solid var(--bd);
+   color:var(--tx3); font-size:11px; display:flex;
+   justify-content:space-between; flex-wrap:wrap; gap:6px; }}
+ @media print {{ body {{ background:#fff; }} .wrap {{ padding:0; }} }}
+</style></head><body><div class="wrap">
+
+<header>
+  <div><h1>VERITAS <small>{APP_VER}</small></h1>
+  <div class="sub">Deprem Kayıtlarının Seçimi ve Ölçeklendirilmesi ·
+  TBDY&nbsp;2018 §2.5 — Zaman Tanım Alanında Hesap</div></div>
+  <div class="sub">Rapor tarihi: {now}</div>
+</header>
+
+<div class="callout {'ok' if ok else 'err'}">
+  <b>Sonuç: TBDY 2018 §2.5.2.5 spektrum koşulu {badge(ok)}</b><br>
+  DD-2: en düşük oran {L2['min_ratio']:.3f} (T = {L2['t_crit']:.2f} s) {badge(L2['passed'])} ·
+  DD-1: en düşük oran {L1['min_ratio']:.3f} (T = {L1['t_crit']:.2f} s) {badge(L1['passed'])}<br>
+  Değerlendirme bandı 0.2·Tp – 1.5·Tp = {band_txt} · Yöntem: {mode_txt}
+</div>
+{warns_html}
+
+<h2>1&nbsp;· Girdi Parametreleri</h2>
+<div class="cards">
+  <div class="card"><b>{_esc(p.soil)}</b><span>Yerel zemin sınıfı</span></div>
+  <div class="card"><b>{p.tp:.2f} s</b><span>Doğal titreşim periyodu Tp</span></div>
+  <div class="card"><b>{band_txt}</b><span>Ölçeklendirme bandı</span></div>
+  <div class="card"><b>{len(R['recs'])} / min 11</b><span>Kayıt takımı sayısı</span></div>
+</div>
+<table><tr><th>Düzey</th><th>Sₛ</th><th>S₁</th><th>Fₛ</th><th>F₁</th>
+<th>S<sub>DS</sub> (g)</th><th>S<sub>D1</sub> (g)</th><th>T<sub>A</sub> (s)</th>
+<th>T<sub>B</sub> (s)</th></tr>{''.join(par_rows)}</table>
+
+<h2>2&nbsp;· Kayıt Kütüphanesi</h2>
+<table><tr><th>No</th><th>Deprem</th><th>Mw</th><th>Mek.</th><th>İstasyon</th>
+<th>Bileşenler (H1 / H2)</th><th>R<sub>epi</sub><br>(km)</th>
+<th>R<sub>jb</sub><br>(km)</th><th>V<sub>s30</sub></th><th>Δt (s)</th>
+<th>Süre (s)</th><th>PGA H1/H2 (g)</th></tr>{''.join(rec_rows)}</table>
+
+<h2>3&nbsp;· Yöntem</h2>
+<p class="sub" style="font-size:12.5px">
+Her kayıt takımı için %5 sönümlü tepki spektrumları frekans ortamında kesin
+çözümle hesaplanmış, TBDY 2018 §2.5.2.5 uyarınca basit (genlik)
+ölçeklendirme uygulanmıştır. Bireysel katsayı <b>f</b> her kaydın spektrum
+ordinatlarını 0.2·Tp – 1.5·Tp bandında hedef spektruma en küçük kareler
+anlamında yaklaştırır; grup katsayısı <b>g</b> ölçekli spektrumların
+ortalamasının bandın her noktasında hedefin ({mode_txt.split('—')[1].strip()})
+altına düşmemesini sağlar. Nihai katsayı <b>F&nbsp;=&nbsp;f&nbsp;×&nbsp;g</b>
+her deprem düzeyi için ayrı ayrı verilmiştir.</p>
+
+<h2>4&nbsp;· Ölçek Katsayıları</h2>
+<div class="cards">
+  <div class="card"><b>{L2['g']:.4f}</b><span>Grup katsayısı g · DD-2</span></div>
+  <div class="card"><b>{L1['g']:.4f}</b><span>Grup katsayısı g · DD-1</span></div>
+  <div class="card"><b>{L2['k']:.1f}·Sae</b><span>Hedef düzeyi (k)</span></div>
+</div>
+<table><tr><th>No</th><th>Deprem</th><th>İstasyon</th><th>f · DD-2</th>
+<th>F · DD-2</th><th>f · DD-1</th><th>F · DD-1</th>
+<th>Ölçekli PGA DD-2<br>H1/H2 (g)</th></tr>{''.join(co_rows)}</table>
+
+<h2>5&nbsp;· Grafikler</h2>
+<figure style="margin:0">
+<img class="chart" src="data:image/png;base64,{charts['target']}" alt="">
+<figcaption>Yatay elastik tasarım spektrumları Sae(T) ve değerlendirme bandı.</figcaption>
+<img class="chart" src="data:image/png;base64,{charts['scaled_DD-2']}" alt="">
+<figcaption>DD-2 — ölçekli spektrumlar, ortalama ve {L2['k']:.1f}·Sae hedefi.</figcaption>
+<img class="chart" src="data:image/png;base64,{charts['scaled_DD-1']}" alt="">
+<figcaption>DD-1 — ölçekli spektrumlar, ortalama ve {L1['k']:.1f}·Sae hedefi.</figcaption>
+<img class="chart" src="data:image/png;base64,{charts['coeffs']}" alt="">
+<figcaption>Kayıt bazında nihai ölçek katsayıları F = f × g.</figcaption>
+</figure>
+
+<footer>
+  <div>{APP_NAME} {APP_VER} ile oluşturulmuştur · TBDY 2018 §2.5</div>
+  <div>Sonuçlar sorumlu mühendis tarafından doğrulanmalıdır.</div>
+</footer>
+</div></body></html>"""
+
+
+# =============================================================================
+# 12) HAKKINDA
+# =============================================================================
+class AboutDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        th = theme_of(parent) if parent else LIGHT
+        self.setWindowTitle(f"Hakkında — {APP_NAME}")
+        self.setFixedWidth(560)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(SP8, SP6, SP8, SP6)
+        v.setSpacing(SP3)
+
+        top = QHBoxLayout()
+        top.setSpacing(SP4)
+        top.addWidget(icon_label(ICO["logo"], th["accent"], 46),
+                      0, Qt.AlignmentFlag.AlignTop)
+        box = QVBoxLayout()
+        box.setSpacing(2)
+        name_row = QHBoxLayout()
+        name_row.setSpacing(SP2)
+        nm = QLabel(APP_NAME)
+        nm.setObjectName("AboutName")
+        vr = QLabel(APP_VER)
+        vr.setObjectName("AboutVer")
+        name_row.addWidget(nm)
+        name_row.addWidget(vr, 0, Qt.AlignmentFlag.AlignVCenter)
+        name_row.addStretch(1)
+        sub = QLabel(APP_SUB)
+        sub.setObjectName("AboutSub")
+        box.addLayout(name_row)
+        box.addWidget(sub)
+        top.addLayout(box, 1)
+        v.addLayout(top)
+        v.addSpacing(SP2)
+        v.addWidget(hline(th))
+
+        body = QLabel(
+            "VERITAS, Türkiye Bina Deprem Yönetmeliği (TBDY 2018) Bölüm 2.5 "
+            "kapsamında zaman tanım alanında hesap için deprem kaydı seçimi ve "
+            "basit (genlik) ölçeklendirme sürecini uçtan uca yürütür.\n\n"
+            "•  AFAD tehlike parametrelerinden hedef tasarım spektrumları "
+            "(DD-2 · DD-1)\n"
+            "•  PEER NGA (.AT2) okuma ve %5 sönümlü tepki spektrumu "
+            "(frekans ortamında kesin çözüm)\n"
+            "•  TBDY §2.5.2.5 bireysel (f) ve grup (g) katsayıları, F = f × g\n"
+            "•  Δt uyumlaştırma — ortak en ince zaman adımına kayıpsız "
+            "yeniden örnekleme\n"
+            "•  Proje kaydetme/açma (.vts) · CSV, PNG, TXT ve HTML rapor "
+            "dışa aktarımı")
+        body.setObjectName("AboutBody")
+        body.setWordWrap(True)
+        v.addWidget(body)
+        v.addWidget(hline(th))
+
+        foot = QLabel(
+            "Bu yazılım mühendislik yargısının yerini almaz; sonuçlar sorumlu "
+            "mühendis tarafından doğrulanmalıdır. TBDY 2018 hükümleri esastır.\n"
+            f"Python {sys.version_info.major}.{sys.version_info.minor} · "
+            "PyQt6 · numpy · matplotlib")
+        foot.setObjectName("AboutFoot")
+        foot.setWordWrap(True)
+        v.addWidget(foot)
+
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        bb.accepted.connect(self.accept)
+        v.addWidget(bb)
+
+
+# =============================================================================
+# 13) SAYFA 4 — RAPOR & DIŞA AKTARIM
 # =============================================================================
 class ReportPage(QWidget):
     def __init__(self, state: AppState, scaling: ScalingPage):
@@ -1605,19 +2089,48 @@ class ReportPage(QWidget):
         self.sc_m = StatCard("Yöntem")
         self.sc_g2 = StatCard("Grup katsayısı g · DD-2")
         self.sc_g1 = StatCard("Grup katsayısı g · DD-1")
-        for c in (self.sc_n, self.sc_m, self.sc_g2, self.sc_g1):
+        self.sc_r2 = StatCard("En düşük oran · DD-2")
+        self.sc_r1 = StatCard("En düşük oran · DD-1")
+        for c in (self.sc_n, self.sc_m, self.sc_g2, self.sc_g1,
+                  self.sc_r2, self.sc_r1):
             row.addWidget(c, 1)
         root.addLayout(row)
 
         self.banner = Banner()
         root.addWidget(self.banner)
 
+        self.card_par = Card("Hedef Spektrum Parametreleri",
+                             "TBDY 2018 Denk. 2.1–2.3 · güncel girdiler")
+        pr = QHBoxLayout()
+        pr.setSpacing(SP2)
+        self.chip_soil = Chip("", "accent")
+        self.chip_tp = Chip("", "accent")
+        self.chip_band = Chip("", "accent")
+        for c in (self.chip_soil, self.chip_tp, self.chip_band):
+            pr.addWidget(c)
+        pr.addStretch(1)
+        self.card_par.v.addLayout(pr)
+        self.par_tbl = QTableWidget(2, 9)
+        self.par_tbl.setHorizontalHeaderLabels(
+            ["Düzey", "Ss", "S1", "Fs", "F1", "SDS (g)", "SD1 (g)",
+             "TA (s)", "TB (s)"])
+        self.par_tbl.verticalHeader().setVisible(False)
+        self.par_tbl.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.par_tbl.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.par_tbl.setShowGrid(False)
+        self.par_tbl.setAlternatingRowColors(True)
+        ph = self.par_tbl.horizontalHeader()
+        ph.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.par_tbl.setFixedHeight(118)
+        self.card_par.v.addWidget(self.par_tbl)
+        root.addWidget(self.card_par)
+
         self.card_tbl = Card("Ölçek Katsayıları Özeti",
                              "F = f (bireysel, EKK) × g (grup)")
         self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels(
-            ["No", "Deprem", "İstasyon", "Mw",
-             "F · DD-2", "Tablo 11 · DD-2", "F · DD-1", "Tablo 11 · DD-1", "Durum"])
+            ["No", "Deprem", "İstasyon", "Mw", "f · DD-2", "F · DD-2",
+             "f · DD-1", "F · DD-1", "Durum"])
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -1634,6 +2147,12 @@ class ReportPage(QWidget):
         exp = Card("Dışa Aktarım", "Tez ve rapor kullanımı için")
         eb = QHBoxLayout()
         eb.setSpacing(SP2)
+        self.bt_html = QPushButton("  Kapsamlı Rapor (HTML)")
+        self.bt_html.setObjectName("Primary")
+        self.bt_html.setToolTip(
+            "Parametreler, kayıt kütüphanesi, katsayılar, doğrulama ve\n"
+            "gömülü grafiklerle tek dosyalık rapor üretir.")
+        self.bt_html.clicked.connect(self.exp_html)
         self.bt_csv = QPushButton("  Katsayılar (CSV)")
         self.bt_spc = QPushButton("  Spektrumlar (CSV)")
         self.bt_png = QPushButton("  Grafikler (PNG · 300 dpi)")
@@ -1650,23 +2169,48 @@ class ReportPage(QWidget):
         root.addStretch(1)
 
     # ---------------------------------------------------------------
+    def _refresh_params(self):
+        """Parametre kartını günceller (hesap yapılmamışken de doludur)."""
+        p = self.state.params
+        self.chip_soil.setText(f"Zemin sınıfı {p.soil}")
+        self.chip_tp.setText(f"Tp = {p.tp:.2f} s")
+        self.chip_band.setText(
+            f"Bant 0.2·Tp–1.5·Tp = {0.2*p.tp:.2f}–{1.5*p.tp:.2f} s")
+        for row, lvl in enumerate(("DD-2", "DD-1")):
+            ss, s1 = ((p.ss_dd2, p.s1_dd2) if lvl == "DD-2"
+                      else (p.ss_dd1, p.s1_dd1))
+            sds, sd1, fs, f1 = p.sds_sd1(lvl)
+            vals = [lvl, f"{ss:.3f}", f"{s1:.3f}", f"{fs:.3f}", f"{f1:.3f}",
+                    f"{sds:.3f}", f"{sd1:.3f}",
+                    f"{0.2*sd1/sds:.3f}", f"{sd1/sds:.3f}"]
+            for col, txt in enumerate(vals):
+                it = QTableWidgetItem(txt)
+                if col == 0:
+                    f = it.font(); f.setBold(True); it.setFont(f)
+                else:
+                    it.setTextAlignment(Qt.AlignmentFlag.AlignRight |
+                                        Qt.AlignmentFlag.AlignVCenter)
+                self.par_tbl.setItem(row, col, it)
+
     def refresh(self):
         th = self.window().theme
         R = self.state.results
+        self._refresh_params()
         if not R:
-            self.sc_n.val.setText("—")
-            self.sc_m.val.setText("—")
-            self.sc_g2.val.setText("—")
-            self.sc_g1.val.setText("—")
+            for c in (self.sc_n, self.sc_m, self.sc_g2, self.sc_g1,
+                      self.sc_r2, self.sc_r1):
+                c.val.setText("—")
             self.table.setRowCount(0)
-            for b in (self.bt_csv, self.bt_spc, self.bt_png, self.bt_ts):
+            for b in (self.bt_html, self.bt_csv, self.bt_spc,
+                      self.bt_png, self.bt_ts):
                 b.setEnabled(False)
             self.banner.show_msg(
                 "info", "Rapor için önce ölçeklendirmeyi hesaplayın.",
                 "Sonuçlar hesaplandığında katsayı tablosu ve dışa aktarım "
                 "burada etkinleşir.", th)
             return
-        for b in (self.bt_csv, self.bt_spc, self.bt_png, self.bt_ts):
+        for b in (self.bt_html, self.bt_csv, self.bt_spc,
+                  self.bt_png, self.bt_ts):
             b.setEnabled(True)
         recs = R["recs"]
         L2, L1 = R["levels"]["DD-2"], R["levels"]["DD-1"]
@@ -1674,6 +2218,10 @@ class ReportPage(QWidget):
         self.sc_m.val.setText("SRSS · 1.3·Sae" if R["mode3d"] else "2B · 1.0·Sae")
         self.sc_g2.val.setText(f"{L2['g']:.3f}")
         self.sc_g1.val.setText(f"{L1['g']:.3f}")
+        self.sc_r2.val.setText(f"{L2['min_ratio']:.3f}")
+        self.sc_r2.setToolTip(f"Kritik periyot T = {L2['t_crit']:.2f} s")
+        self.sc_r1.val.setText(f"{L1['min_ratio']:.3f}")
+        self.sc_r1.setToolTip(f"Kritik periyot T = {L1['t_crit']:.2f} s")
         ok = L2["passed"] and L1["passed"]
         if ok and not R["warns"]:
             self.banner.show_msg(
@@ -1689,17 +2237,16 @@ class ReportPage(QWidget):
                 th)
         self.table.setRowCount(len(recs))
         for i, r in enumerate(recs):
-            vals = [str(i + 1), r.event, r.station, f"{r.mag:.1f}",
-                    f"{L2['F'][i]:.3f}",
-                    f"{r.ref_dd2:.2f}" if r.ref_dd2 else "—",
-                    f"{L1['F'][i]:.3f}",
-                    f"{r.ref_dd1:.2f}" if r.ref_dd1 else "—"]
+            vals = [str(i + 1), r.event, r.station,
+                    f"{r.mag:.1f}" if r.mag else "—",
+                    f"{L2['f'][i]:.3f}", f"{L2['F'][i]:.3f}",
+                    f"{L1['f'][i]:.3f}", f"{L1['F'][i]:.3f}"]
             for j, txt in enumerate(vals):
                 it = QTableWidgetItem(txt)
                 if j >= 3:
                     it.setTextAlignment(Qt.AlignmentFlag.AlignRight |
                                         Qt.AlignmentFlag.AlignVCenter)
-                if j in (4, 6):
+                if j in (5, 7):
                     f = it.font(); f.setBold(True); it.setFont(f)
                     it.setForeground(QColor(th["accent"]))
                 self.table.setItem(i, j, it)
@@ -1713,6 +2260,25 @@ class ReportPage(QWidget):
         p, _ = QFileDialog.getSaveFileName(self, caption, default, filt)
         return p
 
+    def exp_html(self):
+        p = self._save("HTML raporu kaydet", "veritas_rapor.html",
+                       "HTML (*.html)")
+        if not p:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            html = build_html_report(self.state)
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(html)
+        except OSError as ex:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(self, APP_NAME, f"Rapor yazılamadı:\n{ex}")
+            return
+        finally:
+            if QApplication.overrideCursor() is not None:
+                QApplication.restoreOverrideCursor()
+        QMessageBox.information(self, APP_NAME, f"Rapor kaydedildi:\n{p}")
+
     def exp_csv(self):
         R = self.state.results
         p = self._save("Katsayıları kaydet", "veritas_katsayilar.csv", "CSV (*.csv)")
@@ -1723,15 +2289,13 @@ class ReportPage(QWidget):
             w = csv.writer(f, delimiter=";")
             w.writerow(["No", "Deprem", "Mw", "Fay Mekanizmasi", "Istasyon",
                         "H1", "H2", "Episantr (km)", "En Kisa (km)", "Vs30",
-                        "f_DD2", "g_DD2", "F_DD2", "Tablo11_DD2",
-                        "f_DD1", "g_DD1", "F_DD1", "Tablo11_DD1"])
+                        "f_DD2", "g_DD2", "F_DD2",
+                        "f_DD1", "g_DD1", "F_DD1"])
             for i, r in enumerate(R["recs"]):
                 w.writerow([i + 1, r.event, r.mag, r.mech, r.station, r.h1, r.h2,
                             r.repi, r.rjb, r.vs30,
                             f"{L2['f'][i]:.4f}", f"{L2['g']:.4f}", f"{L2['F'][i]:.4f}",
-                            r.ref_dd2 or "",
-                            f"{L1['f'][i]:.4f}", f"{L1['g']:.4f}", f"{L1['F'][i]:.4f}",
-                            r.ref_dd1 or ""])
+                            f"{L1['f'][i]:.4f}", f"{L1['g']:.4f}", f"{L1['F'][i]:.4f}"])
         QMessageBox.information(self, APP_NAME, f"Kaydedildi:\n{p}")
 
     def exp_spectra(self):
@@ -1799,13 +2363,13 @@ class ReportPage(QWidget):
 
 
 # =============================================================================
-# 12) ANA PENCERE
+# 14) ANA PENCERE
 # =============================================================================
 PAGES = [
     ("spectrum", "Spektrum Parametreleri", "Hedef tasarım spektrumları (DD-2 · DD-1)"),
-    ("records",  "Kayıt Kütüphanesi",      "Tablo 11 varsayılanları + kullanıcı kayıtları"),
+    ("records",  "Kayıt Kütüphanesi",      "Kullanıcı .AT2 kayıt takımları (PEER NGA)"),
     ("scale",    "Ölçeklendirme",          "TBDY 2018 §2.5 basit ölçeklendirme ve grafikler"),
-    ("report",   "Rapor & Dışa Aktarım",   "Katsayı özeti · CSV / PNG / TXT çıktıları"),
+    ("report",   "Rapor & Dışa Aktarım",   "Katsayı özeti · HTML / CSV / PNG / TXT çıktıları"),
 ]
 
 
@@ -1815,7 +2379,8 @@ class MainWindow(QMainWindow):
         self.dark = False
         self.theme = LIGHT
         self.state = AppState()
-        self.setWindowTitle(f"{APP_NAME} — {APP_SUB}")
+        self.proj_path: str | None = None
+        self.dirty = False
         self.resize(1440, 880)
 
         central = QWidget()
@@ -1919,15 +2484,187 @@ class MainWindow(QMainWindow):
         self.page_spec.changed.connect(self.page_scale.invalidate)
         self.page_recs.changed.connect(self.page_scale.invalidate)
         self.page_scale.computed.connect(self.page_rep.refresh)
+        self.page_spec.changed.connect(lambda: self._set_dirty(True))
+        self.page_recs.changed.connect(lambda: self._set_dirty(True))
 
         act = QAction(self)
         act.setShortcut(QKeySequence("F5"))
         act.triggered.connect(self.page_scale.compute)
         self.addAction(act)
 
+        self._build_menu()
         self.apply_theme()
         self.nav_btns[0].setChecked(True)
         self.goto(0)
+        self._update_title()
+
+    # ------------------------------------------------------------------
+    # Menü çubuğu · proje dosyası · hakkında
+    # ------------------------------------------------------------------
+    def _build_menu(self):
+        mb = self.menuBar()
+        m_file = mb.addMenu("&Dosya")
+
+        def add(menu, text, shortcut, slot):
+            a = QAction(text, self)
+            if shortcut:
+                a.setShortcut(QKeySequence(shortcut))
+            a.triggered.connect(slot)
+            menu.addAction(a)
+            return a
+
+        add(m_file, "Yeni Proje", "Ctrl+N", self.proj_new)
+        add(m_file, "Proje Aç…", "Ctrl+O", self.proj_open)
+        m_file.addSeparator()
+        add(m_file, "Kaydet", "Ctrl+S", lambda *_: self.proj_save())
+        add(m_file, "Farklı Kaydet…", "Ctrl+Shift+S", self.proj_save_as)
+        m_file.addSeparator()
+        add(m_file, "Çıkış", "Ctrl+Q", self.close)
+
+        m_help = mb.addMenu("&Yardım")
+        add(m_help, f"Hakkında — {APP_NAME}", None, self.show_about)
+
+    def show_about(self, *_):
+        AboutDialog(self).exec()
+
+    # --- proje serileştirme -------------------------------------------
+    def project_dict(self) -> dict:
+        p = self.state.params
+        return {
+            "format": PROJ_FORMAT, "version": PROJ_VERSION,
+            "app": f"{APP_NAME} {APP_VER}",
+            "saved": datetime.now().isoformat(timespec="seconds"),
+            "params": dict(ss_dd2=p.ss_dd2, s1_dd2=p.s1_dd2,
+                           ss_dd1=p.ss_dd1, s1_dd1=p.s1_dd1,
+                           soil=p.soil, tp=p.tp, mode3d=p.mode3d),
+            "records": [r.to_dict() for r in self.state.records],
+        }
+
+    def _apply_project_dict(self, d: dict) -> int:
+        """Proje sözlüğünü duruma uygular → dosyası bulunamayan kayıt sayısı."""
+        if d.get("format") != PROJ_FORMAT:
+            raise ValueError("Dosya bir VERITAS projesi değil.")
+        pr = d.get("params", {})
+        soil = str(pr.get("soil", "ZC"))
+        self.state.params = Params(
+            ss_dd2=float(pr.get("ss_dd2", 1.20)),
+            s1_dd2=float(pr.get("s1_dd2", 0.30)),
+            ss_dd1=float(pr.get("ss_dd1", 2.00)),
+            s1_dd1=float(pr.get("s1_dd1", 0.55)),
+            soil=soil if soil in SOIL_CLASSES else "ZC",
+            tp=float(pr.get("tp", 1.00)),
+            mode3d=bool(pr.get("mode3d", True)))
+        recs = [GMRecord.from_dict(rd) for rd in d.get("records", [])]
+        self.state.records = recs
+        return sum(1 for r in recs if not r.ready)
+
+    def _sync_ui_from_state(self):
+        self.state.results = None
+        self.page_spec.sync_from_state()
+        self.page_recs.populate()
+        sc = self.page_scale
+        sc.tabs.hide()
+        sc.empty.show()
+        sc.banner.hide()
+        sc.cb_rec.clear()
+        self.page_rep.refresh()
+
+    # --- proje eylemleri ----------------------------------------------
+    def proj_new(self, *_):
+        if not self._confirm_discard():
+            return
+        self.state.params = Params()
+        self.state.records = []
+        self.proj_path = None
+        self._sync_ui_from_state()
+        self._set_dirty(False)
+        self.goto(0)
+
+    def proj_open(self, *_):
+        if not self._confirm_discard():
+            return
+        p, _ = QFileDialog.getOpenFileName(self, "Proje aç", "", PROJ_FILTER)
+        if not p:
+            return
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            missing = self._apply_project_dict(d)
+        except (OSError, json.JSONDecodeError, KeyError, TypeError,
+                ValueError) as ex:
+            QMessageBox.critical(self, APP_NAME, f"Proje açılamadı:\n{ex}")
+            return
+        self.proj_path = p
+        self._sync_ui_from_state()
+        self._set_dirty(False)
+        self.goto(1)
+        th = self.theme
+        n = len(self.state.records)
+        if missing:
+            self.page_recs.hint.show_msg(
+                "warn", f"Proje yüklendi — {n} kayıttan {missing} tanesinin "
+                ".AT2 dosyası bulunamadı.",
+                "Dosyalar taşınmış olabilir; “Kayıt Klasörünü Tara” ile "
+                "yeniden eşleştirin.", th)
+        elif n:
+            self.page_recs.hint.show_msg(
+                "ok", f"Proje yüklendi — {n} kayıt takımının tamamı hazır.",
+                os.path.basename(p), th)
+
+    def proj_save(self, path: str | None = None) -> bool:
+        path = path or self.proj_path
+        if not path:
+            return self.proj_save_as()
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self.project_dict(), f, ensure_ascii=False, indent=2)
+        except OSError as ex:
+            QMessageBox.critical(self, APP_NAME, f"Proje kaydedilemedi:\n{ex}")
+            return False
+        self.proj_path = path
+        self._set_dirty(False)
+        return True
+
+    def proj_save_as(self, *_) -> bool:
+        p, _ = QFileDialog.getSaveFileName(
+            self, "Projeyi kaydet", self.proj_path or "proje.vts", PROJ_FILTER)
+        if not p:
+            return False
+        if not os.path.splitext(p)[1]:
+            p += ".vts"
+        return self.proj_save(p)
+
+    # --- kirli durum & kapanış ----------------------------------------
+    def _set_dirty(self, v: bool):
+        if self.dirty != v:
+            self.dirty = v
+            self._update_title()
+
+    def _update_title(self):
+        name = (os.path.basename(self.proj_path) if self.proj_path
+                else "Adsız proje")
+        star = " •" if self.dirty else ""
+        self.setWindowTitle(f"{APP_NAME} — {name}{star} — {APP_SUB}")
+
+    def _confirm_discard(self) -> bool:
+        if not self.dirty:
+            return True
+        r = QMessageBox.question(
+            self, APP_NAME,
+            "Projede kaydedilmemiş değişiklikler var.\nKaydedilsin mi?",
+            QMessageBox.StandardButton.Save |
+            QMessageBox.StandardButton.Discard |
+            QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save)
+        if r == QMessageBox.StandardButton.Save:
+            return self.proj_save()
+        return r == QMessageBox.StandardButton.Discard
+
+    def closeEvent(self, ev):
+        if self._confirm_discard():
+            ev.accept()
+        else:
+            ev.ignore()
 
     # ---------------------------------------------------------------
     def goto(self, i: int):
@@ -1954,10 +2691,12 @@ class MainWindow(QMainWindow):
                                         th["sidebar_txt"], 18))
         self.page_recs.bt_folder.setIcon(char_icon(ICO["folder"], th["on_accent"], 18))
         self.page_recs.bt_add.setIcon(char_icon(ICO["add"], th["text2"], 18))
+        self.page_recs.bt_dt.setIcon(char_icon(ICO["sync"], th["text2"], 18))
         self.page_recs.bt_del.setIcon(char_icon(ICO["trash"], th["text2"], 18))
         self.page_recs.bt_all.setIcon(char_icon(ICO["all"], th["text2"], 18))
         self.page_recs.bt_none.setIcon(char_icon(ICO["none"], th["text2"], 18))
         self.page_scale.bt_run.setIcon(char_icon(ICO["run"], th["on_accent"], 18))
+        self.page_rep.bt_html.setIcon(char_icon(ICO["doc"], th["on_accent"], 18))
         for b in (self.page_rep.bt_csv, self.page_rep.bt_spc,
                   self.page_rep.bt_png, self.page_rep.bt_ts):
             b.setIcon(char_icon(ICO["export"], th["text2"], 18))
@@ -1969,7 +2708,7 @@ class MainWindow(QMainWindow):
 
 
 # =============================================================================
-# 13) GİRİŞ NOKTASI
+# 15) GİRİŞ NOKTASI
 # =============================================================================
 def load_fonts():
     base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
